@@ -1,0 +1,206 @@
+const express = require('express');
+const mongoose = require('mongoose');
+const userRoutes = require('./routes/userRoutes');
+const adRoutes = require('./routes/adRoutes');
+const app = express();
+const port = 3000;
+
+// Middleware
+app.use(express.json());
+
+// Connexion à MongoDB
+mongoose.connect('mongodb://localhost:27017/journalads', {
+  useNewUrlParser: true,
+  useUnifiedTopology: true
+}).then(() => console.log('MongoDB connected'))
+  .catch(err => console.log(err));
+
+// Routes
+app.use('/api/users', userRoutes);
+app.use('/api/ads', adRoutes);
+
+app.listen(port, () => {
+  console.log(`Server running on port ${port}`);
+});
+const mongoose = require('mongoose');
+
+const connectDB = async () => {
+  try {
+    await mongoose.connect('mongodb://localhost:27017/journalads', {
+      useNewUrlParser: true,
+      useUnifiedTopology: true,
+      useCreateIndex: true
+    });
+    console.log('MongoDB connected');
+  } catch (err) {
+    console.error(err.message);
+    process.exit(1);
+  }
+};
+
+module.exports = connectDB;
+const mongoose = require('mongoose');
+const bcrypt = require('bcryptjs');
+
+const UserSchema = new mongoose.Schema({
+  username: { type: String, required: true, unique: true },
+  password: { type: String, required: true },
+  email: { type: String, required: true, unique: true }
+});
+
+UserSchema.pre('save', async function(next) {
+  if (!this.isModified('password')) return next();
+  const salt = await bcrypt.genSalt(10);
+  this.password = await bcrypt.hash(this.password, salt);
+  next();
+});
+
+module.exports = mongoose.model('User', UserSchema);
+const mongoose = require('mongoose');
+
+const AdSchema = new mongoose.Schema({
+  title: { type: String, required: true },
+  description: { type: String, required: true },
+  price: { type: Number, required: true },
+  category: { type: String, required: true },
+  user: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  date: { type: Date, default: Date.now }
+});
+
+module.exports = mongoose.model('Ad', AdSchema);
+const express = require('express');
+const { registerUser, loginUser } = require('../controllers/userController');
+const router = express.Router();
+
+router.post('/register', registerUser);
+router.post('/login', loginUser);
+
+module.exports = router;
+const express = require('express');
+const { getAds, getAdById, createAd, updateAd, deleteAd } = require('../controllers/adController');
+
+
+router.get('/', getAds);
+router.get('/:id', getAdById);
+router.post('/', createAd);
+router.put('/:id', updateAd);
+router.delete('/:id', deleteAd);
+
+module.exports = router;
+const User = require('../models/User');
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+
+exports.registerUser = async (req, res) => {
+  const { username, email, password } = req.body;
+  try {
+    const newUser = new User({ username, email, password });
+    await newUser.save();
+    res.status(201).json({ message: 'User registered successfully' });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+exports.loginUser = async (req, res) => {
+  const { email, password } = req.body;
+  try {
+    const user = await User.findOne({ email });
+    if (!user) return res.status(400).json({ message: 'Invalid credentials' });
+
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) return res.status(400).json({ message: 'Invalid credentials' });
+
+    const token = jwt.sign({ id: user._id }, 'your_jwt_secret', { expiresIn: '1h' });
+    res.json({ token });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+const Ad = require('../models/Ad');
+
+exports.getAds = async (req, res) => {
+  try {
+    const ads = await Ad.find().populate('user', 'username email');
+    res.json(ads);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+exports.getAdById = async (req, res) => {
+  try {
+    const ad = await Ad.findById(req.params.id).populate('user', 'username email');
+    if (!ad) return res.status(404).json({ message: 'Ad not found' });
+    res.json(ad);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+exports.createAd = async (req, res) => {
+  const { title, description, price, category } = req.body;
+  try {
+    const newAd = new Ad({ title, description, price, category, user: req.user.id });
+    await newAd.save();
+    res.status(201).json(newAd);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+exports.updateAd = async (req, res) => {
+  try {
+    const ad = await Ad.findById(req.params.id);
+    if (!ad) return res.status(404).json({ message: 'Ad not found' });
+
+    const { title, description, price, category } = req.body;
+    ad.title = title || ad.title;
+    ad.description = description || ad.description;
+    ad.price = price || ad.price;
+    ad.category = category || ad.category;
+
+    await ad.save();
+    res.json(ad);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+exports.deleteAd = async (req, res) => {
+  try {
+    const ad = await Ad.findById(req.params.id);
+    if (!ad) return res.status(404).json({ message: 'Ad not found' });
+
+    await ad.remove();
+    res.json({ message: 'Ad removed' });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+const jwt = require('jsonwebtoken');
+
+module.exports = function(req, res, next) {
+  const token = req.header('x-auth-token');
+  if (!token) return res.status(401).json({ message: 'No token, authorization denied' });
+
+  try {
+    const decoded = jwt.verify(token, 'your_jwt_secret');
+    req.user = decoded;
+    next();
+  } catch (error) {
+    res.status(400).json({ message: 'Token is not valid' });
+  }
+};
+const express = require('express');
+const { getAds, getAdById, createAd, updateAd, deleteAd } = require('../controllers/adController');
+const auth = require('../middleware/auth');
+
+
+router.get('/', getAds);
+router.get('/:id', getAdById);
+router.post('/', auth, createAd);
+router.put('/:id', auth, updateAd);
+router.delete('/:id', auth, deleteAd);
+
+module.exports = router;
